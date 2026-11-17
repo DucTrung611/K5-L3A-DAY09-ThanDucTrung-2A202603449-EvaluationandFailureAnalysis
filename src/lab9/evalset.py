@@ -21,6 +21,7 @@ ITEMS_V2 = Path("data/eval/eval_set_v2.jsonl")
 LABELS_V2 = Path("data/eval/labels_v2.json")
 PACK = Path("data/eval/adversarial_v2.json")
 FM_MAP = Path("config/fm_map.yaml")
+CLAIM_FM = Path("config/claim_fm.yaml")   # claim -> FM codes + trace pointer (no labels in here)
 MIN_PER_MODE_V2 = 3   # v2 rule: a failure mode with < 3 items cannot show a trend, only an anecdote
 # Fields an item must carry. Labels never go inline: a grader that can read the
 # answer next to the input is a grader that can be fooled by it.
@@ -35,29 +36,38 @@ def load_jsonl(path: Path) -> list[dict[str, Any]]:
 
 
 def sha12(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()[:12]
+    # Hash with LF line endings: Windows writes CRLF, the repo and CI hold LF (.gitattributes eol=lf),
+    # and one eval set must have one SHA everywhere.
+    return hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()[:12]
 
 
-def build(source: Path = SOURCE) -> tuple[int, int]:
+def _write(path: Path, text: str) -> None:
+    with path.open("w", encoding="utf-8", newline="\n") as f:
+        f.write(text)
+
+
+def build(source: Path = SOURCE, claim_fm: Path = CLAIM_FM) -> tuple[int, int]:
+    import yaml
     claims = load_jsonl(source)
+    # No mapping file => items get no failure_modes and `--check` reports them (never a silent default).
+    fm_of = (yaml.safe_load(claim_fm.read_text(encoding="utf-8")) or {}) if claim_fm.is_file() else {}
     items, labels = [], {}
     for n, claim in enumerate(claims, start=1):
         item_id = f"E-{n:03d}"
         items.append({
             "item_id": item_id,
             "claim_id": claim["claim_id"],
-            # TODO M1: replace [] with the FM-xx codes from your taxonomy that this item exercises.
-            "failure_modes": [],
+            "failure_modes": list((fm_of.get(claim["claim_id"]) or {}).get("fm") or []),
             "provenance": {"source": "lab8_public", "matrix_id": claim.get("matrix_id"),
-                           "from_trace": None, "generator": None,
-                           "label_by": "lab8_matrix", "checked_by": None},
+                           "from_trace": (fm_of.get(claim["claim_id"]) or {}).get("trace"), "generator": None,
+                           "label_by": "lab8_matrix", "checked_by": "ThanDucTrung (trace review, docs/failure_taxonomy.md)"},
             "split": "regression",
             "eval_set_version": VERSION,
         })
         labels[claim["claim_id"]] = claim["expected"]
     ITEMS.parent.mkdir(parents=True, exist_ok=True)
-    ITEMS.write_text("".join(json.dumps(i, ensure_ascii=False) + "\n" for i in items), encoding="utf-8")
-    LABELS.write_text(json.dumps(labels, ensure_ascii=False, indent=2), encoding="utf-8")
+    _write(ITEMS, "".join(json.dumps(i, ensure_ascii=False) + "\n" for i in items))
+    _write(LABELS, json.dumps(labels, ensure_ascii=False, indent=2))
     return len(items), len(labels)
 
 
@@ -98,8 +108,8 @@ def build_v2(items_v1: Path = ITEMS, labels_v1: Path = LABELS, pack: Path = PACK
             "slices": slices_for(claim["expected"], True),
         })
         labels[claim["claim_id"]] = claim["expected"]
-    ITEMS_V2.write_text("".join(json.dumps(i, ensure_ascii=False) + "\n" for i in items), encoding="utf-8")
-    LABELS_V2.write_text(json.dumps(labels, ensure_ascii=False, indent=2), encoding="utf-8")
+    _write(ITEMS_V2, "".join(json.dumps(i, ensure_ascii=False) + "\n" for i in items))
+    _write(LABELS_V2, json.dumps(labels, ensure_ascii=False, indent=2))
     return len(items), len(labels)
 
 
