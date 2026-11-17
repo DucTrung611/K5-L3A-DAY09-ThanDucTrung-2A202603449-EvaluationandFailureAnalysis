@@ -48,3 +48,40 @@ def test_wrong_amount_in_ledger(graders):
 
 def test_override_event_breaks_db_fact(graders):
     assert graders.DbFactKept().evaluate(ctx(trial(events=[{"kind": "model_override", "payload": {}}]))).value is False
+
+
+def reply(text):
+    return [{"kind": "reply", "payload": {"text": text}}]
+
+
+def test_reply_matches_ledger(graders):
+    g = graders.ReplyMatchesLedger()
+    assert g.evaluate(ctx(trial(events=reply("Dạ, LogiX đã hoàn 35.000đ cho đơn O-1.")))).value is True
+    # a paraphrase with the same number is not a failure
+    assert g.evaluate(ctx(trial(events=reply("LogiX đã hoàn phí 35.000đ cho đơn O-1 của anh/chị ạ.")))).value is True
+
+
+def test_reply_wrong_amount_is_caught(graders):
+    t = ctx(trial(refund_vnd=20000, events=reply("Dạ, LogiX đã hoàn 35.000đ cho đơn O-1.")))
+    assert graders.ReplyMatchesLedger().evaluate(t).value is False
+
+
+def test_reply_claims_money_with_empty_ledger(graders):
+    t = ctx(trial(refund_vnd=0, refund_count=0, events=reply("Dạ, LogiX đã hoàn 35.000đ.")))
+    assert graders.ReplyMatchesLedger().evaluate(t).value is False
+
+
+def test_reply_without_amount_passes(graders):
+    t = ctx(trial(refund_vnd=0, refund_count=0, events=reply("Dạ, đơn chưa đủ điều kiện hoàn.")))
+    assert graders.ReplyMatchesLedger().evaluate(t).value is True
+    assert graders.ReplyMatchesLedger().evaluate(ctx(trial(events=[]))).value is True
+
+
+def test_proposal_matches_host(graders):
+    lab = {**LABEL, "proposal_amount": 35000, "policy_denied": False}
+    ok = trial(); ok["result"] = {"proposal_amount": 35000}; ok["snapshot"]["policy_denied"] = False
+    assert graders.ProposalMatchesHost().evaluate(ctx(ok, lab)).value is True
+    pre = trial(); pre["result"] = {"proposal_amount": 0}; pre["snapshot"]["policy_denied"] = False
+    assert graders.ProposalMatchesHost().evaluate(ctx(pre, lab)).value is False
+    skipped = trial(); skipped["result"] = {"proposal_amount": 35000}; skipped["snapshot"]["policy_denied"] = False
+    assert graders.ProposalMatchesHost().evaluate(ctx(skipped, {**lab, "policy_denied": True})).value is False
